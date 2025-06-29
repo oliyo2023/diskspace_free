@@ -1,37 +1,37 @@
-# Disk Space Analyzer
+# 磁盘空间分析器
 
-A command-line tool built with Rust to analyze and display disk space usage in a terminal-based user interface.
+一个使用 Rust 构建的命令行工具，用于在终端用户界面中分析和显示磁盘空间使用情况。
 
-## Features
+## 功能特性
 
-- Scans the specified disk or directory.
-- Displays a hierarchical view of files and folders.
-- Uses `ratatui` to create an interactive terminal UI.
+- 扫描指定的磁盘或目录。
+- 以层级视图显示文件和文件夹。
+- 使用 `ratatui` 创建交互式终端用户界面。
 
-## How to Build and Run
+## 如何构建和运行
 
-1.  **Clone the repository:**
+1.  **克隆仓库:**
     ```sh
     git clone https://github.com/oliyo2023/diskspace_free.git
     cd diskspace_free
     ```
 
-2.  **Build the project in release mode:**
+2.  **以 release 模式构建项目:**
     ```sh
     cargo build --release
     ```
 
-3.  **Run the application:**
-    The executable will be located in the `target/release/` directory.
+3.  **运行程序:**
+    可执行文件将位于 `target/release/` 目录下。
     ```sh
     ./target/release/diskspace_free
     ```
 
-## Dependencies
+## 依赖库
 
-This project relies on several great Rust libraries, including:
-- `ratatui` for the terminal user interface.
-- `crossterm` for terminal manipulation.
-- `tokio` for asynchronous operations.
-- `rayon` for parallel iteration.
-- `is-admin` to check for administrator privileges.
+本项目依赖于以下优秀的 Rust 库：
+- `ratatui`：用于构建终端用户界面。
+- `crossterm`：用于终端处理。
+- `tokio`：用于异步操作。
+- `rayon`：用于并行迭代。
+- `is-admin`：用于检查管理员权限。
