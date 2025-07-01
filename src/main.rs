@@ -19,26 +19,44 @@ use std::{
     },
     time::Duration,
 };
+use windows_sys::Win32::{
+    System::ProcessStatus::{
+        EmptyWorkingSet, EnumProcesses, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    },
+    System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+};
 
 struct App {
     cleaned_files: Vec<String>,
     is_cleaning: Arc<AtomicBool>,
     messages: Vec<String>,
     cleaning_finished: bool,
+    is_releasing_memory: bool,
 }
 
 impl App {
     fn new() -> Self {
         let mut messages = vec!["按 'q' 退出".to_string()];
         if !is_admin::is_admin() {
-            messages.push("提示: 未以管理员权限运行, 可能部分文件无法清理。".to_string());
+            messages.push("提示: 未以管理员权限运行, 可能部分文件无法清理或释放内存。".to_string());
         }
         Self {
             cleaned_files: Vec::new(),
             is_cleaning: Arc::new(AtomicBool::new(false)),
             messages,
             cleaning_finished: false,
+            is_releasing_memory: false,
         }
+    }
+
+    fn start_release_memory(&mut self, sender: mpsc::Sender<String>) {
+        self.is_releasing_memory = true;
+        self.messages.push("正在释放内存...".to_string());
+        let sender_clone = sender.clone();
+        tokio::spawn(async move {
+            let released_count = release_memory();
+            sender_clone.send(format!("内存释放完成! 共整理了 {} 个进程。", released_count)).unwrap();
+        });
     }
 
     fn start_cleaning(&mut self, sender: mpsc::Sender<String>) {
@@ -68,7 +86,7 @@ async fn main() -> io::Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut app = App::new();
 
-    app.start_cleaning(tx.clone());
+    app.start_release_memory(tx.clone());
 
     loop {
         terminal.draw(|frame| {
@@ -79,7 +97,7 @@ async fn main() -> io::Result<()> {
                 .split(frame.size());
 
             let cleaned_list: Vec<ListItem> = app.cleaned_files.iter().map(|f| ListItem::new(f.as_str())).collect();
-            let cleaned_list_widget = List::new(cleaned_list).block(Block::default().title("已清理文件/目录").borders(Borders::ALL));
+            let cleaned_list_widget = List::new(cleaned_list).block(Block::default().title("操作日志").borders(Borders::ALL));
             frame.render_widget(cleaned_list_widget, main_layout[0]);
 
             let messages_widget = Paragraph::new(app.messages.join("\n")).block(Block::default().title("状态").borders(Borders::ALL));
@@ -96,7 +114,13 @@ async fn main() -> io::Result<()> {
         }
 
         if let Ok(msg) = rx.try_recv() {
-            if msg.starts_with("清理完成") {
+            if msg.starts_with("内存释放完成") {
+                app.is_releasing_memory = false;
+                app.messages.retain(|m| m != "正在释放内存...");
+                app.messages.push(msg.clone());
+                app.cleaned_files.push(msg);
+                app.start_cleaning(tx.clone());
+            } else if msg.starts_with("清理完成") {
                 app.is_cleaning.store(false, Ordering::SeqCst);
                 app.cleaning_finished = true;
                 app.messages.retain(|m| m != "正在清理中...");
@@ -163,3 +187,42 @@ fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
     0
 }
 
+fn release_memory() -> usize {
+    let process_ids = unsafe {
+        let mut pids = Vec::with_capacity(1024);
+        let mut cb_needed = 0;
+        if EnumProcesses(pids.as_mut_ptr(), (pids.capacity() * std::mem::size_of::<u32>()) as u32, &mut cb_needed) != 0 {
+            pids.set_len((cb_needed / std::mem::size_of::<u32>() as u32) as usize);
+            pids
+        } else {
+            Vec::new()
+        }
+    };
+
+    process_ids.par_iter().filter_map(|&pid| {
+        let process_handle = unsafe {
+            OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+        };
+
+        if !process_handle.is_null() {
+            let mut counters = std::mem::MaybeUninit::<PROCESS_MEMORY_COUNTERS>::uninit();
+            let result = unsafe {
+                GetProcessMemoryInfo(process_handle, counters.as_mut_ptr(), std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32)
+            };
+
+            if result != 0 {
+                unsafe {
+                    if EmptyWorkingSet(process_handle) != 0 {
+                        Some(1)
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }).count()
+}
