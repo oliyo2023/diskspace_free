@@ -163,32 +163,61 @@ fn get_cached_paths() -> Vec<PathBuf> {
         if !paths.contains(&path_buf) { paths.push(path_buf); }
     }
 
-    // Windows系统缓存
+    // Windows系统级缓存
     if let Ok(win_dir) = env::var("windir") {
         paths.push(Path::new(&win_dir).join("Prefetch"));
         paths.push(Path::new(&win_dir).join("Logs"));
+        paths.push(Path::new(&win_dir).join("SoftwareDistribution").join("Download"));
+        paths.push(Path::new(&win_dir).join("Temp"));
     }
 
-    // 用户下载文件夹（只清理特定类型的文件）
+    // 用户相关缓存和临时文件
     if let Ok(user_profile) = env::var("USERPROFILE") {
-        let downloads_path = Path::new(&user_profile).join("Downloads");
+        let user_path = Path::new(&user_profile);
+
+        // 下载文件夹（只清理特定类型的文件）
+        let downloads_path = user_path.join("Downloads");
         if downloads_path.exists() {
             paths.push(downloads_path);
         }
+
+        // 回收站
+        paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Windows").join("Explorer").join("ThumbCacheToDelete"));
+
+        // 浏览器缓存
+        paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Edge").join("User Data").join("Default").join("Cache"));
+        paths.push(user_path.join("AppData").join("Local").join("Google").join("Chrome").join("User Data").join("Default").join("Cache"));
+        paths.push(user_path.join("AppData").join("Local").join("Mozilla").join("Firefox").join("Profiles"));
+
+        // Windows Store缓存
+        paths.push(user_path.join("AppData").join("Local").join("Packages").join("Microsoft.WindowsStore_8wekyb3d8bbwe").join("LocalCache"));
+
+        // 系统错误报告
+        paths.push(user_path.join("AppData").join("Local").join("CrashDumps"));
+
+        // 最近使用的文件缓存
+        paths.push(user_path.join("AppData").join("Roaming").join("Microsoft").join("Windows").join("Recent"));
+    }
+
+    // 系统级缓存（需要管理员权限）
+    if is_admin::is_admin() {
+        paths.push(PathBuf::from("C:\\Windows\\SoftwareDistribution\\Download"));
+        paths.push(PathBuf::from("C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportQueue"));
+        paths.push(PathBuf::from("C:\\Windows\\LiveKernelReports"));
+        paths.push(PathBuf::from("C:\\Windows\\Minidump"));
     }
 
     paths
 }
 
 fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
+    if !dir.exists() {
+        return 0;
+    }
+
     if let Ok(entries) = fs::read_dir(dir) {
         let entries: Vec<_> = entries.filter_map(Result::ok).collect();
-
-        // 检查是否是下载文件夹
-        let is_downloads_folder = dir.file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name.eq_ignore_ascii_case("downloads"))
-            .unwrap_or(false);
+        let dir_str = dir.to_string_lossy().to_lowercase();
 
         return entries
             .par_iter()
@@ -196,16 +225,7 @@ fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
                 let path = entry.path();
                 let mut count = 0;
 
-                if is_downloads_folder {
-                    // 对于下载文件夹，只清理安全的临时文件
-                    if should_clean_download_file(&path) {
-                        if path.is_file() && fs::remove_file(&path).is_ok() {
-                            sender.send(format!("已删除下载临时文件: {:?}", path)).ok();
-                            count += 1;
-                        }
-                    }
-                } else {
-                    // 对于其他文件夹，执行完全清理
+                if should_clean_file(&path, &dir_str) {
                     if path.is_dir() {
                         if fs::remove_dir_all(&path).is_ok() {
                             sender.send(format!("已删除目录: {:?}", path)).ok();
@@ -213,7 +233,8 @@ fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
                         }
                     } else if path.is_file() {
                         if fs::remove_file(&path).is_ok() {
-                            sender.send(format!("已删除文件: {:?}", path)).ok();
+                            let file_type = get_file_type_description(&dir_str);
+                            sender.send(format!("已删除{}: {:?}", file_type, path)).ok();
                             count += 1;
                         }
                     }
@@ -223,6 +244,55 @@ fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
             .sum();
     }
     0
+}
+
+fn should_clean_file(path: &Path, dir_str: &str) -> bool {
+    if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+        let file_name_lower = file_name.to_lowercase();
+
+        // 下载文件夹特殊处理
+        if dir_str.contains("downloads") {
+            return should_clean_download_file(path);
+        }
+
+        // Firefox配置文件夹特殊处理
+        if dir_str.contains("firefox") && dir_str.contains("profiles") {
+            return file_name_lower.contains("cache") ||
+                   file_name_lower.contains("temp") ||
+                   file_name_lower.ends_with(".tmp");
+        }
+
+        // Recent文件夹特殊处理
+        if dir_str.contains("recent") {
+            return file_name_lower.ends_with(".lnk");
+        }
+
+        // 浏览器缓存文件夹
+        if dir_str.contains("cache") || dir_str.contains("temp") {
+            return true;
+        }
+
+        // 错误报告和转储文件
+        if dir_str.contains("crashdumps") ||
+           dir_str.contains("reportqueue") ||
+           dir_str.contains("minidump") ||
+           dir_str.contains("livekernelreports") {
+            return true;
+        }
+
+        // 默认临时文件清理
+        let temp_extensions = [
+            ".tmp", ".temp", ".cache", ".log", ".dmp", ".mdmp"
+        ];
+
+        for ext in &temp_extensions {
+            if file_name_lower.ends_with(ext) {
+                return true;
+            }
+        }
+    }
+
+    true // 对于其他系统临时文件夹，默认清理所有内容
 }
 
 fn should_clean_download_file(path: &Path) -> bool {
@@ -262,6 +332,28 @@ fn should_clean_download_file(path: &Path) -> bool {
     }
 
     false
+}
+
+fn get_file_type_description(dir_str: &str) -> &'static str {
+    if dir_str.contains("downloads") {
+        "下载临时文件"
+    } else if dir_str.contains("cache") {
+        "缓存文件"
+    } else if dir_str.contains("temp") {
+        "临时文件"
+    } else if dir_str.contains("crashdumps") {
+        "崩溃转储文件"
+    } else if dir_str.contains("recent") {
+        "最近使用记录"
+    } else if dir_str.contains("prefetch") {
+        "预读取文件"
+    } else if dir_str.contains("logs") {
+        "日志文件"
+    } else if dir_str.contains("reportqueue") {
+        "错误报告"
+    } else {
+        "系统文件"
+    }
 }
 
 fn release_memory() -> usize {
