@@ -2,9 +2,9 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2011-blue.svg)](https://www.microsoft.com/windows)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](https://www.rust-lang.org)
 
-一个专为 Windows 11 设计的高效磁盘空间清理工具，使用 Rust 构建，提供美观的终端用户界面和智能的文件清理功能。
+一个专为 Windows 和 Linux 设计的高效磁盘空间清理工具，使用 Rust 构建，提供美观的终端用户界面和智能的文件清理功能。
 
 ## ✨ 功能特性
 
@@ -18,10 +18,14 @@
 ### 🎯 清理目标
 
 #### 系统临时文件
-- Windows 临时文件夹 (`%TEMP%`, `%TMP%`)
-- Windows 系统临时文件 (`C:\Windows\Temp`)
-- 预读取缓存 (`C:\Windows\Prefetch`)
-- 系统日志文件 (`C:\Windows\Logs`)
+- **Windows**:
+  - 临时文件夹 (`%TEMP%`, `%TMP%`)
+  - 系统临时文件 (`C:\Windows\Temp`)
+  - 预读取缓存 (`C:\Windows\Prefetch`)
+  - 系统日志文件 (`C:\Windows\Logs`)
+- **Linux**:
+  - 系统日志文件 (`/var/log`)
+  - 临时文件夹 (`/tmp`)
 
 #### 更新和下载缓存
 - Windows 更新下载缓存 (`SoftwareDistribution\Download`)
@@ -51,7 +55,7 @@
 ## 🚀 快速开始
 
 ### 系统要求
-- Windows 11
+- Windows 10/11 或 Linux
 - Rust 1.70+ (用于编译)
 
 ### 安装和运行

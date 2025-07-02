@@ -156,55 +156,60 @@ fn shutdown_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Re
 fn get_cached_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    // 临时文件夹
-    if let Ok(temp) = env::var("TEMP") { paths.push(temp.into()); }
-    if let Ok(tmp) = env::var("TMP") {
-        let path_buf = PathBuf::from(tmp);
-        if !paths.contains(&path_buf) { paths.push(path_buf); }
-    }
-
-    // Windows系统级缓存
-    if let Ok(win_dir) = env::var("windir") {
-        paths.push(Path::new(&win_dir).join("Prefetch"));
-        paths.push(Path::new(&win_dir).join("Logs"));
-        paths.push(Path::new(&win_dir).join("SoftwareDistribution").join("Download"));
-        paths.push(Path::new(&win_dir).join("Temp"));
-    }
-
-    // 用户相关缓存和临时文件
-    if let Ok(user_profile) = env::var("USERPROFILE") {
-        let user_path = Path::new(&user_profile);
-
-        // 下载文件夹（只清理特定类型的文件）
-        let downloads_path = user_path.join("Downloads");
-        if downloads_path.exists() {
-            paths.push(downloads_path);
+    if cfg!(windows) {
+        // 临时文件夹
+        if let Ok(temp) = env::var("TEMP") { paths.push(temp.into()); }
+        if let Ok(tmp) = env::var("TMP") {
+            let path_buf = PathBuf::from(tmp);
+            if !paths.contains(&path_buf) { paths.push(path_buf); }
         }
 
-        // 回收站
-        paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Windows").join("Explorer").join("ThumbCacheToDelete"));
+        // Windows系统级缓存
+        if let Ok(win_dir) = env::var("windir") {
+            paths.push(Path::new(&win_dir).join("Prefetch"));
+            paths.push(Path::new(&win_dir).join("Logs"));
+            paths.push(Path::new(&win_dir).join("SoftwareDistribution").join("Download"));
+            paths.push(Path::new(&win_dir).join("Temp"));
+        }
 
-        // 浏览器缓存
-        paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Edge").join("User Data").join("Default").join("Cache"));
-        paths.push(user_path.join("AppData").join("Local").join("Google").join("Chrome").join("User Data").join("Default").join("Cache"));
-        paths.push(user_path.join("AppData").join("Local").join("Mozilla").join("Firefox").join("Profiles"));
+        // 用户相关缓存和临时文件
+        if let Ok(user_profile) = env::var("USERPROFILE") {
+            let user_path = Path::new(&user_profile);
 
-        // Windows Store缓存
-        paths.push(user_path.join("AppData").join("Local").join("Packages").join("Microsoft.WindowsStore_8wekyb3d8bbwe").join("LocalCache"));
+            // 下载文件夹（只清理特定类型的文件）
+            let downloads_path = user_path.join("Downloads");
+            if downloads_path.exists() {
+                paths.push(downloads_path);
+            }
 
-        // 系统错误报告
-        paths.push(user_path.join("AppData").join("Local").join("CrashDumps"));
+            // 回收站
+            paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Windows").join("Explorer").join("ThumbCacheToDelete"));
 
-        // 最近使用的文件缓存
-        paths.push(user_path.join("AppData").join("Roaming").join("Microsoft").join("Windows").join("Recent"));
-    }
+            // 浏览器缓存
+            paths.push(user_path.join("AppData").join("Local").join("Microsoft").join("Edge").join("User Data").join("Default").join("Cache"));
+            paths.push(user_path.join("AppData").join("Local").join("Google").join("Chrome").join("User Data").join("Default").join("Cache"));
+            paths.push(user_path.join("AppData").join("Local").join("Mozilla").join("Firefox").join("Profiles"));
 
-    // 系统级缓存（需要管理员权限）
-    if is_admin::is_admin() {
-        paths.push(PathBuf::from("C:\\Windows\\SoftwareDistribution\\Download"));
-        paths.push(PathBuf::from("C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportQueue"));
-        paths.push(PathBuf::from("C:\\Windows\\LiveKernelReports"));
-        paths.push(PathBuf::from("C:\\Windows\\Minidump"));
+            // Windows Store缓存
+            paths.push(user_path.join("AppData").join("Local").join("Packages").join("Microsoft.WindowsStore_8wekyb3d8bbwe").join("LocalCache"));
+
+            // 系统错误报告
+            paths.push(user_path.join("AppData").join("Local").join("CrashDumps"));
+
+            // 最近使用的文件缓存
+            paths.push(user_path.join("AppData").join("Roaming").join("Microsoft").join("Windows").join("Recent"));
+        }
+
+        // 系统级缓存（需要管理员权限）
+        if is_admin::is_admin() {
+            paths.push(PathBuf::from("C:\\Windows\\SoftwareDistribution\\Download"));
+            paths.push(PathBuf::from("C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportQueue"));
+            paths.push(PathBuf::from("C:\\Windows\\LiveKernelReports"));
+            paths.push(PathBuf::from("C:\\Windows\\Minidump"));
+        }
+    } else if cfg!(unix) {
+        paths.push(PathBuf::from("/var/log"));
+        paths.push(PathBuf::from("/tmp"));
     }
 
     paths
