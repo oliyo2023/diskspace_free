@@ -67,6 +67,18 @@ impl App {
 
         let paths = get_cached_paths();
         let is_cleaning_clone = self.is_cleaning.clone();
+        let sender_clone = sender.clone();
+
+        // 显示将要清理的文件夹
+        for path in &paths {
+            if let Some(folder_name) = path.file_name().and_then(|name| name.to_str()) {
+                if folder_name.eq_ignore_ascii_case("downloads") {
+                    sender_clone.send("正在扫描下载文件夹 (仅清理临时文件)...".to_string()).ok();
+                } else {
+                    sender_clone.send(format!("正在扫描: {}", path.display())).ok();
+                }
+            }
+        }
 
         tokio::spawn(async move {
             let total_cleaned = paths
@@ -143,35 +155,67 @@ fn shutdown_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Re
 
 fn get_cached_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+
+    // 临时文件夹
     if let Ok(temp) = env::var("TEMP") { paths.push(temp.into()); }
     if let Ok(tmp) = env::var("TMP") {
         let path_buf = PathBuf::from(tmp);
         if !paths.contains(&path_buf) { paths.push(path_buf); }
     }
+
+    // Windows系统缓存
     if let Ok(win_dir) = env::var("windir") {
         paths.push(Path::new(&win_dir).join("Prefetch"));
         paths.push(Path::new(&win_dir).join("Logs"));
     }
+
+    // 用户下载文件夹（只清理特定类型的文件）
+    if let Ok(user_profile) = env::var("USERPROFILE") {
+        let downloads_path = Path::new(&user_profile).join("Downloads");
+        if downloads_path.exists() {
+            paths.push(downloads_path);
+        }
+    }
+
     paths
 }
 
 fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
     if let Ok(entries) = fs::read_dir(dir) {
         let entries: Vec<_> = entries.filter_map(Result::ok).collect();
+
+        // 检查是否是下载文件夹
+        let is_downloads_folder = dir.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case("downloads"))
+            .unwrap_or(false);
+
         return entries
             .par_iter()
             .map(|entry| {
                 let path = entry.path();
                 let mut count = 0;
-                if path.is_dir() {
-                    if fs::remove_dir_all(&path).is_ok() {
-                        sender.send(format!("已删除目录: {:?}", path)).ok();
-                        count += 1;
+
+                if is_downloads_folder {
+                    // 对于下载文件夹，只清理安全的临时文件
+                    if should_clean_download_file(&path) {
+                        if path.is_file() && fs::remove_file(&path).is_ok() {
+                            sender.send(format!("已删除下载临时文件: {:?}", path)).ok();
+                            count += 1;
+                        }
                     }
-                } else if path.is_file() {
-                    if fs::remove_file(&path).is_ok() {
-                        sender.send(format!("已删除文件: {:?}", path)).ok();
-                        count += 1;
+                } else {
+                    // 对于其他文件夹，执行完全清理
+                    if path.is_dir() {
+                        if fs::remove_dir_all(&path).is_ok() {
+                            sender.send(format!("已删除目录: {:?}", path)).ok();
+                            count += 1;
+                        }
+                    } else if path.is_file() {
+                        if fs::remove_file(&path).is_ok() {
+                            sender.send(format!("已删除文件: {:?}", path)).ok();
+                            count += 1;
+                        }
                     }
                 }
                 count
@@ -179,6 +223,45 @@ fn clean_directory(dir: &Path, sender: mpsc::Sender<String>) -> usize {
             .sum();
     }
     0
+}
+
+fn should_clean_download_file(path: &Path) -> bool {
+    if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+        let file_name_lower = file_name.to_lowercase();
+
+        // 只清理明确的临时文件和缓存文件
+        let temp_extensions = [
+            ".tmp", ".temp", ".cache", ".crdownload", ".part",
+            ".partial", ".download", ".!ut", ".bc!", ".crx"
+        ];
+
+        let temp_prefixes = [
+            "~", "tmp", "temp", "cache"
+        ];
+
+        // 检查文件扩展名
+        for ext in &temp_extensions {
+            if file_name_lower.ends_with(ext) {
+                return true;
+            }
+        }
+
+        // 检查文件名前缀
+        for prefix in &temp_prefixes {
+            if file_name_lower.starts_with(prefix) {
+                return true;
+            }
+        }
+
+        // 检查是否是浏览器临时文件
+        if file_name_lower.contains("temp") ||
+           file_name_lower.contains("cache") ||
+           file_name_lower.contains("tmp") {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn release_memory() -> usize {
