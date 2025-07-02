@@ -4,7 +4,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    prelude::{CrosstermBackend, Terminal},
+    prelude::{CrosstermBackend, Terminal, Color, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use rayon::prelude::*;
@@ -86,22 +86,16 @@ async fn main() -> io::Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut app = App::new();
 
+    // 立即绘制初始界面框架，避免空白
+    terminal.draw(|frame| {
+        draw_ui(frame, &app);
+    })?;
+
     app.start_release_memory(tx.clone());
 
     loop {
         terminal.draw(|frame| {
-            let main_layout = ratatui::layout::Layout::default()
-                .direction(ratatui::layout::Direction::Vertical)
-                .margin(1)
-                .constraints([ratatui::layout::Constraint::Percentage(80), ratatui::layout::Constraint::Percentage(20)])
-                .split(frame.size());
-
-            let cleaned_list: Vec<ListItem> = app.cleaned_files.iter().map(|f| ListItem::new(f.as_str())).collect();
-            let cleaned_list_widget = List::new(cleaned_list).block(Block::default().title("操作日志").borders(Borders::ALL));
-            frame.render_widget(cleaned_list_widget, main_layout[0]);
-
-            let messages_widget = Paragraph::new(app.messages.join("\n")).block(Block::default().title("状态").borders(Borders::ALL));
-            frame.render_widget(messages_widget, main_layout[1]);
+            draw_ui(frame, &app);
         })?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -225,4 +219,41 @@ fn release_memory() -> usize {
             None
         }
     }).count()
+}
+
+fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
+    let main_layout = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .margin(1)
+        .constraints([ratatui::layout::Constraint::Percentage(80), ratatui::layout::Constraint::Percentage(20)])
+        .split(frame.size());
+
+    let cleaned_list: Vec<ListItem> = app.cleaned_files.iter().map(|f| ListItem::new(f.as_str())).collect();
+    let cleaned_list_widget = List::new(cleaned_list)
+        .block(Block::default()
+            .title("操作日志")
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::LightBlue)));
+    frame.render_widget(cleaned_list_widget, main_layout[0]);
+
+    let messages_widget = Paragraph::new(
+        app.messages.iter().map(|msg| {
+            let color = if msg.starts_with("已删除") {
+                Color::Red
+            } else if msg.starts_with("内存释放完成") {
+                Color::Green
+            } else if msg.starts_with("清理完成") {
+                Color::Yellow
+            } else if msg.starts_with("提示") {
+                Color::Magenta
+            } else {
+                Color::White
+            };
+            ratatui::text::Line::from(ratatui::text::Span::styled(msg, Style::default().fg(color)))
+        }).collect::<Vec<_>>()
+    ).block(Block::default()
+        .title("状态")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::LightCyan)));
+    frame.render_widget(messages_widget, main_layout[1]);
 }
