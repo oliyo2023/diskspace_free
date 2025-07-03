@@ -77,16 +77,7 @@
    cargo build --release
    ```
 
-3. **配置程序（可选）**
-   ```bash
-   # 复制配置文件模板
-   cp config.example.toml config.toml
-
-   # 编辑配置文件，设置 PocketBase URL 等
-   notepad config.toml
-   ```
-
-4. **运行程序**
+3. **运行程序**
    ```bash
    # 普通用户权限运行
    ./target/release/diskspace_free.exe
@@ -104,18 +95,11 @@
 
 ### 配置说明
 
-程序支持通过 `config.toml` 文件进行配置：
+程序已内置 PocketBase 配置，无需额外配置文件。如需修改 PocketBase 服务器地址，请修改源代码中的常量：
 
-```toml
-[pocketbase]
-url = "https://your-pocketbase-url.com"  # PocketBase 服务器地址
-collection = "cleanup_records"           # 数据集合名称
-enabled = true                          # 是否启用数据上传
-timeout = 30                           # 上传超时时间（秒）
-
-[notification]
-enabled = true                          # 是否启用系统通知
-timeout = 5000                         # 通知显示时间（毫秒）
+```rust
+const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
+const COLLECTION_NAME: &str = "cleanup_records";
 ```
 
 详细的 PocketBase 设置请参考 [POCKETBASE_SETUP.md](POCKETBASE_SETUP.md)
@@ -134,7 +118,7 @@ timeout = 5000                         # 通知显示时间（毫秒）
 - **chrono** `0.4` - 日期时间处理
 - **uuid** `1.0` - UUID 生成
 - **notify-rust** `4.10` - 系统通知
-- **toml** `0.8` - 配置文件解析
+
 
 ### 性能优化
 - 并行文件处理提升清理速度
