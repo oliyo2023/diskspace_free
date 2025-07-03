@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use notify_rust::Notification;
 use ratatui::{
     prelude::{CrosstermBackend, Terminal, Color, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
@@ -32,6 +33,8 @@ struct App {
     messages: Vec<String>,
     cleaning_finished: bool,
     is_releasing_memory: bool,
+    memory_released_count: usize,
+    files_cleaned_count: usize,
 }
 
 impl App {
@@ -46,6 +49,8 @@ impl App {
             messages,
             cleaning_finished: false,
             is_releasing_memory: false,
+            memory_released_count: 0,
+            files_cleaned_count: 0,
         }
     }
 
@@ -55,7 +60,7 @@ impl App {
         let sender_clone = sender.clone();
         tokio::spawn(async move {
             let released_count = release_memory();
-            sender_clone.send(format!("内存释放完成! 共整理了 {} 个进程。", released_count)).unwrap();
+            sender_clone.send(format!("MEMORY_RELEASE_COMPLETE:{}", released_count)).unwrap();
         });
     }
 
@@ -86,7 +91,7 @@ impl App {
                 .map(|path| clean_directory(path, sender.clone()))
                 .sum::<usize>();
 
-            sender.send(format!("清理完成! 总共清理了 {} 个文件/目录。", total_cleaned)).unwrap();
+            sender.send(format!("CLEANING_COMPLETE:{}", total_cleaned)).unwrap();
             is_cleaning_clone.store(false, Ordering::SeqCst);
         });
     }
@@ -120,17 +125,26 @@ async fn main() -> io::Result<()> {
         }
 
         if let Ok(msg) = rx.try_recv() {
-            if msg.starts_with("内存释放完成") {
+            if msg.starts_with("MEMORY_RELEASE_COMPLETE:") {
+                let count_str = msg.strip_prefix("MEMORY_RELEASE_COMPLETE:").unwrap_or("0");
+                app.memory_released_count = count_str.parse().unwrap_or(0);
                 app.is_releasing_memory = false;
                 app.messages.retain(|m| m != "正在释放内存...");
-                app.messages.push(msg.clone());
-                app.cleaned_files.push(msg);
+                let display_msg = format!("内存释放完成! 共整理了 {} 个进程。", app.memory_released_count);
+                app.messages.push(display_msg.clone());
+                app.cleaned_files.push(display_msg);
                 app.start_cleaning(tx.clone());
-            } else if msg.starts_with("清理完成") {
+            } else if msg.starts_with("CLEANING_COMPLETE:") {
+                let count_str = msg.strip_prefix("CLEANING_COMPLETE:").unwrap_or("0");
+                app.files_cleaned_count = count_str.parse().unwrap_or(0);
                 app.is_cleaning.store(false, Ordering::SeqCst);
                 app.cleaning_finished = true;
                 app.messages.retain(|m| m != "正在清理中...");
-                app.messages.push(msg);
+                let display_msg = format!("清理完成! 总共清理了 {} 个文件/目录。", app.files_cleaned_count);
+                app.messages.push(display_msg);
+
+                // 发送系统通知
+                send_completion_notification(app.files_cleaned_count, app.memory_released_count);
             } else {
                 app.cleaned_files.push(msg);
             }
@@ -399,6 +413,34 @@ fn release_memory() -> usize {
             None
         }
     }).count()
+}
+
+fn send_completion_notification(cleaned_count: usize, memory_count: usize) {
+    // 在后台线程中发送通知，避免阻塞主界面
+    tokio::spawn(async move {
+        let title = "磁盘清理完成";
+        let body = if cleaned_count > 0 {
+            format!("清理完成！清理了 {} 个文件/目录，优化了 {} 个进程内存", cleaned_count, memory_count)
+        } else {
+            format!("清理完成！优化了 {} 个进程内存，系统已经很干净了", memory_count)
+        };
+
+        // 尝试发送系统通知
+        match Notification::new()
+            .summary(title)
+            .body(&body)
+            .timeout(5000) // 5秒后自动消失
+            .show()
+        {
+            Ok(_) => {
+                // 通知发送成功
+            }
+            Err(_) => {
+                // 通知发送失败，静默处理
+                // 在Windows上，如果没有合适的通知系统，这是正常的
+            }
+        }
+    });
 }
 
 fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
