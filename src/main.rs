@@ -31,61 +31,13 @@ use windows_sys::Win32::{
     System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Config {
-    pocketbase: PocketBaseConfig,
-    notification: NotificationConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PocketBaseConfig {
-    url: String,
-    collection: String,
-    enabled: bool,
-    timeout: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NotificationConfig {
-    enabled: bool,
-    timeout: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            pocketbase: PocketBaseConfig {
-                url: "https://your-pocketbase-url.com".to_string(),
-                collection: "cleanup_records".to_string(),
-                enabled: false, // 默认禁用，需要用户配置
-                timeout: 30,
-            },
-            notification: NotificationConfig {
-                enabled: true,
-                timeout: 5000,
-            },
-        }
-    }
-}
-
-fn load_config() -> Config {
-    match std::fs::read_to_string("config.toml") {
-        Ok(content) => {
-            match toml::from_str(&content) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("配置文件解析错误: {}", e);
-                    eprintln!("使用默认配置");
-                    Config::default()
-                }
-            }
-        }
-        Err(_) => {
-            // 配置文件不存在，使用默认配置
-            Config::default()
-        }
-    }
-}
+// PocketBase 配置常量
+const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
+const COLLECTION_NAME: &str = "cleanup_records";
+const POCKETBASE_ENABLED: bool = true;
+const POCKETBASE_TIMEOUT: u64 = 30;
+const NOTIFICATION_ENABLED: bool = true;
+const NOTIFICATION_TIMEOUT: u64 = 5000;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CleanupRecord {
@@ -191,9 +143,6 @@ impl App {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // 加载配置
-    let config = load_config();
-
     let mut terminal = init_terminal()?;
     let (tx, rx) = mpsc::channel();
     let mut app = App::new();
@@ -239,7 +188,7 @@ async fn main() -> io::Result<()> {
                 app.messages.push(display_msg);
 
                 // 发送系统通知
-                send_completion_notification(app.files_cleaned_count, app.memory_released_count, &config.notification);
+                send_completion_notification(app.files_cleaned_count, app.memory_released_count);
 
                 // 创建清理记录并上传到PocketBase
                 let cleanup_end_time = Utc::now();
@@ -258,10 +207,9 @@ async fn main() -> io::Result<()> {
                 };
 
                 // 在后台上传记录
-                let pb_config = config.pocketbase.clone();
                 let upload_sender = tx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = upload_to_pocketbase(record, &pb_config, upload_sender).await {
+                    if let Err(e) = upload_to_pocketbase(record, upload_sender).await {
                         eprintln!("上传清理记录失败: {}", e);
                     }
                 });
@@ -538,13 +486,13 @@ fn release_memory() -> usize {
     }).count()
 }
 
-async fn upload_to_pocketbase(record: CleanupRecord, config: &PocketBaseConfig, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if !config.enabled {
+async fn upload_to_pocketbase(record: CleanupRecord, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !POCKETBASE_ENABLED {
         return Ok(()); // 如果禁用了上传，直接返回
     }
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(config.timeout))
+        .timeout(Duration::from_secs(POCKETBASE_TIMEOUT))
         .build()?;
 
     // 获取计算机名
@@ -562,7 +510,7 @@ async fn upload_to_pocketbase(record: CleanupRecord, config: &PocketBaseConfig, 
         total_duration_seconds: record.total_duration_seconds,
     };
 
-    let url = format!("{}/api/collections/{}/records", config.url, config.collection);
+    let url = format!("{}/api/collections/{}/records", POCKETBASE_URL, COLLECTION_NAME);
 
     let response = client
         .post(&url)
@@ -579,13 +527,13 @@ async fn upload_to_pocketbase(record: CleanupRecord, config: &PocketBaseConfig, 
     Ok(())
 }
 
-fn send_completion_notification(cleaned_count: usize, memory_count: usize, config: &NotificationConfig) {
-    if !config.enabled {
+fn send_completion_notification(cleaned_count: usize, memory_count: usize) {
+    if !NOTIFICATION_ENABLED {
         return; // 如果禁用了通知，直接返回
     }
 
     // 在后台线程中发送通知，避免阻塞主界面
-    let timeout = config.timeout;
+    let timeout = NOTIFICATION_TIMEOUT;
     tokio::spawn(async move {
         let title = "磁盘清理完成";
         let body = if cleaned_count > 0 {
