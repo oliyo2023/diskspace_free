@@ -11,6 +11,12 @@ tokio = { version = "1.36.0", features = ["full"] }
 is-admin = "0.1.1"
 windows-sys = { version = "0.60.2", features = ["Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_ProcessStatus", "Win32_Foundation", "Win32_UI_Shell"] }
 notify-rust = "4.10.0"
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+toml = "0.8"
 
 [profile.release]
 opt-level = "z"

@@ -1,0 +1,22 @@
+# DiskSpace Free 配置文件示例
+# 复制此文件为 config.toml 并修改相应配置
+
+[pocketbase]
+# PocketBase 服务器URL
+url = "https://8.140.206.248/pocketbase"
+
+# 集合名称（在PocketBase中创建的集合）
+collection = "cleanup_records"
+
+# 是否启用数据上传（true/false）
+enabled = true
+
+# 上传超时时间（秒）
+timeout = 30
+
+[notification]
+# 是否启用系统通知
+enabled = true
+
+# 通知显示时间（毫秒）
+timeout = 5000
