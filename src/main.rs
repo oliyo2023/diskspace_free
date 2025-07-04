@@ -29,6 +29,7 @@ use windows_sys::Win32::{
         EmptyWorkingSet, EnumProcesses, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     },
     System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND},
 };
 
 // PocketBase 配置常量
@@ -135,7 +136,11 @@ impl App {
                 .map(|path| clean_directory(path, sender.clone()))
                 .sum::<usize>();
 
-            sender.send(format!("CLEANING_COMPLETE:{}", total_cleaned)).unwrap();
+            // 清空回收站
+            let recycle_bin_cleaned = empty_recycle_bin(sender.clone());
+            let final_total = if recycle_bin_cleaned { total_cleaned + 1 } else { total_cleaned };
+
+            sender.send(format!("CLEANING_COMPLETE:{}", final_total)).unwrap();
             is_cleaning_clone.store(false, Ordering::SeqCst);
         });
     }
@@ -560,6 +565,24 @@ fn send_completion_notification(cleaned_count: usize, memory_count: usize) {
     });
 }
 
+fn empty_recycle_bin(sender: mpsc::Sender<String>) -> bool {
+    unsafe {
+        let result = SHEmptyRecycleBinW(
+            std::ptr::null_mut(), // 所有驱动器
+            std::ptr::null(),     // 清空所有文件
+            SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND, // 静默清空
+        );
+
+        if result == 0 {
+            sender.send("已清空回收站".to_string()).ok();
+            true
+        } else {
+            sender.send("清空回收站失败".to_string()).ok();
+            false
+        }
+    }
+}
+
 fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     let main_layout = ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
@@ -579,6 +602,8 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
         app.messages.iter().map(|msg| {
             let color = if msg.starts_with("已删除") {
                 Color::Red
+            } else if msg.starts_with("已清空回收站") {
+                Color::Cyan
             } else if msg.starts_with("内存释放完成") {
                 Color::Green
             } else if msg.starts_with("清理完成") {
