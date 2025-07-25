@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -10,8 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use rayon::prelude::*;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+
 use std::{
     env,
     fs,
@@ -23,7 +21,6 @@ use std::{
     },
     time::Duration,
 };
-use uuid::Uuid;
 use windows_sys::Win32::{
     System::ProcessStatus::{
         EmptyWorkingSet, EnumProcesses, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
@@ -32,11 +29,7 @@ use windows_sys::Win32::{
     UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND},
 };
 
-// PocketBase 配置常量 (暂时禁用)
-const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
-const COLLECTION_NAME: &str = "cleanup_records";
-const POCKETBASE_ENABLED: bool = false; // 暂时禁用PocketBase上传
-const POCKETBASE_TIMEOUT: u64 = 30;
+// 通知配置常量
 const NOTIFICATION_ENABLED: bool = true;
 const NOTIFICATION_TIMEOUT: u64 = 5000;
 
@@ -46,30 +39,7 @@ const LOG_SCAN_DRIVES: &[&str] = &["C:", "D:", "E:"]; // 要扫描的驱动器
 const LOG_MAX_AGE_DAYS: u64 = 30; // 只清理超过30天的日志文件
 const LOG_MIN_SIZE_MB: u64 = 1; // 只清理大于1MB的日志文件
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CleanupRecord {
-    id: String,
-    computer_name: String,
-    cleanup_time: DateTime<Utc>,
-    files_cleaned_count: i32,
-    memory_processes_count: i32,
-    cleaned_files: Vec<String>,
-    cleanup_paths: Vec<String>,
-    is_admin: bool,
-    total_duration_seconds: i32,
-}
 
-#[derive(Debug, Serialize)]
-struct PocketBaseRecord {
-    computer_name: String,
-    cleanup_time: String,
-    files_cleaned_count: i32,
-    memory_processes_count: i32,
-    cleaned_files: String, // JSON string
-    cleanup_paths: String, // JSON string
-    is_admin: bool,
-    total_duration_seconds: i32,
-}
 
 struct App {
     cleaned_files: Vec<String>,
@@ -79,8 +49,6 @@ struct App {
     is_releasing_memory: bool,
     memory_released_count: usize,
     files_cleaned_count: usize,
-    cleanup_start_time: DateTime<Utc>,
-    cleanup_paths: Vec<String>,
 }
 
 impl App {
@@ -97,8 +65,6 @@ impl App {
             is_releasing_memory: false,
             memory_released_count: 0,
             files_cleaned_count: 0,
-            cleanup_start_time: Utc::now(),
-            cleanup_paths: Vec::new(),
         }
     }
 
@@ -121,9 +87,6 @@ impl App {
         let paths = get_cached_paths();
         let is_cleaning_clone = self.is_cleaning.clone();
         let sender_clone = sender.clone();
-
-        // 收集清理路径信息
-        self.cleanup_paths = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
 
         // 显示将要清理的文件夹
         for path in &paths {
@@ -208,33 +171,6 @@ async fn main() -> io::Result<()> {
 
                 // 发送系统通知
                 send_completion_notification(app.files_cleaned_count, app.memory_released_count);
-
-                // 创建清理记录并上传到PocketBase
-                let cleanup_end_time = Utc::now();
-                let duration = cleanup_end_time.signed_duration_since(app.cleanup_start_time);
-
-                let record = CleanupRecord {
-                    id: Uuid::new_v4().to_string(),
-                    computer_name: env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown".to_string()),
-                    cleanup_time: cleanup_end_time,
-                    files_cleaned_count: app.files_cleaned_count as i32,
-                    memory_processes_count: app.memory_released_count as i32,
-                    cleaned_files: app.cleaned_files.clone(),
-                    cleanup_paths: app.cleanup_paths.clone(),
-                    is_admin: is_admin::is_admin(),
-                    total_duration_seconds: duration.num_seconds() as i32,
-                };
-
-                // 在后台上传记录
-                let upload_sender = tx.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = upload_to_pocketbase(record, upload_sender).await {
-                        eprintln!("上传清理记录失败: {}", e);
-                    }
-                });
-            } else if msg.starts_with("数据已成功同步") {
-                app.messages.push(msg.clone());
-                app.cleaned_files.push(msg);
             } else {
                 app.cleaned_files.push(msg);
             }
@@ -505,46 +441,7 @@ fn release_memory() -> usize {
     }).count()
 }
 
-async fn upload_to_pocketbase(record: CleanupRecord, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if !POCKETBASE_ENABLED {
-        return Ok(()); // 如果禁用了上传，直接返回
-    }
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(POCKETBASE_TIMEOUT))
-        .build()?;
-
-    // 获取计算机名
-    let computer_name = env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown".to_string());
-
-    // 转换为PocketBase格式
-    let pb_record = PocketBaseRecord {
-        computer_name,
-        cleanup_time: record.cleanup_time.to_rfc3339(),
-        files_cleaned_count: record.files_cleaned_count,
-        memory_processes_count: record.memory_processes_count,
-        cleaned_files: serde_json::to_string(&record.cleaned_files)?,
-        cleanup_paths: serde_json::to_string(&record.cleanup_paths)?,
-        is_admin: record.is_admin,
-        total_duration_seconds: record.total_duration_seconds,
-    };
-
-    let url = format!("{}/api/collections/{}/records", POCKETBASE_URL, COLLECTION_NAME);
-
-    let response = client
-        .post(&url)
-        .json(&pb_record)
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        sender.send("数据已成功同步".to_string()).ok();
-    } else {
-        eprintln!("上传到PocketBase失败: {}", response.status());
-    }
-
-    Ok(())
-}
 
 fn send_completion_notification(cleaned_count: usize, memory_count: usize) {
     if !NOTIFICATION_ENABLED {
@@ -767,8 +664,6 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
                 Color::Yellow
             } else if msg.starts_with("提示") {
                 Color::Magenta
-            } else if msg.starts_with("数据已成功同步") {
-                Color::Red
             } else {
                 Color::White
             };

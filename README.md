@@ -63,11 +63,10 @@
 - **实时反馈**: 显示每个清理操作的详细信息
 - **智能过滤**: 基于文件类型和位置的智能清理策略
 
-### 📊 数据记录功能
-- **清理记录**: 自动记录每次清理的详细信息
-- **远程存储**: 支持将清理记录上传到 PocketBase 数据库
-- **数据分析**: 记录清理时间、文件数量、路径等详细信息
-- **多设备管理**: 支持多台计算机的清理记录集中管理
+### 📊 系统通知功能
+- **完成通知**: 清理完成后自动发送系统通知
+- **详细信息**: 显示清理的文件数量和内存优化进程数
+- **非阻塞**: 通知在后台发送，不影响程序运行
 
 ## 🚀 快速开始
 
@@ -101,18 +100,16 @@
 2. 程序自动开始内存释放和文件清理过程
 3. 实时查看清理进度和结果
 4. 清理完成后会显示系统通知（如果启用）
-5. 清理记录会自动上传到 PocketBase（如果配置）
-6. 按 `q` 键退出程序
+5. 按 `q` 键退出程序
 
 ### 配置说明
 
 程序已内置配置，无需额外配置文件。如需修改配置，请修改源代码中的常量：
 
-#### PocketBase 配置 (暂时禁用)
+#### 通知配置
 ```rust
-const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
-const COLLECTION_NAME: &str = "cleanup_records";
-const POCKETBASE_ENABLED: bool = false; // 暂时禁用，避免连接错误
+const NOTIFICATION_ENABLED: bool = true;               // 启用系统通知
+const NOTIFICATION_TIMEOUT: u64 = 5000;               // 通知显示时间(毫秒)
 ```
 
 #### 日志文件清理配置
@@ -123,8 +120,6 @@ const LOG_MAX_AGE_DAYS: u64 = 30;                      // 只清理超过30天�
 const LOG_MIN_SIZE_MB: u64 = 1;                        // 只清理大于1MB的日志
 ```
 
-详细的 PocketBase 设置请参考 [POCKETBASE_SETUP.md](POCKETBASE_SETUP.md)
-
 ## 🔧 技术架构
 
 ### 核心依赖
@@ -134,10 +129,6 @@ const LOG_MIN_SIZE_MB: u64 = 1;                        // 只清理大于1MB的�
 - **rayon** `1.5` - 数据并行处理
 - **windows-sys** `0.60.2` - Windows API 绑定
 - **is-admin** `0.1.1` - 权限检测
-- **reqwest** `0.11` - HTTP 客户端，用于数据上传
-- **serde** `1.0` - 序列化/反序列化框架
-- **chrono** `0.4` - 日期时间处理
-- **uuid** `1.0` - UUID 生成
 - **notify-rust** `4.10` - 系统通知
 
 
