@@ -50,6 +50,13 @@
 - 自动清空系统回收站
 - 释放回收站占用的磁盘空间
 
+#### 磁盘日志文件清理 🆕
+- **智能扫描**: 自动扫描指定驱动器（C:、D:、E:）上的日志文件
+- **安全过滤**: 只清理超过30天且大于1MB的日志文件
+- **全面覆盖**: 扫描系统日志、应用程序日志、用户日志等常见位置
+- **多格式支持**: 支持 `.log`、`.log.old`、`.log.1-5` 等多种日志文件格式
+- **递归搜索**: 深度遍历目录结构，发现隐藏的日志文件
+
 ### 🛡️ 安全特性
 - **权限检测**: 自动检测管理员权限状态
 - **选择性清理**: 下载文件夹仅清理临时文件，保护重要下载
@@ -99,11 +106,21 @@
 
 ### 配置说明
 
-程序已内置 PocketBase 配置，无需额外配置文件。如需修改 PocketBase 服务器地址，请修改源代码中的常量：
+程序已内置配置，无需额外配置文件。如需修改配置，请修改源代码中的常量：
 
+#### PocketBase 配置 (暂时禁用)
 ```rust
 const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
 const COLLECTION_NAME: &str = "cleanup_records";
+const POCKETBASE_ENABLED: bool = false; // 暂时禁用，避免连接错误
+```
+
+#### 日志文件清理配置
+```rust
+const LOG_SCAN_ENABLED: bool = true;                    // 启用日志扫描
+const LOG_SCAN_DRIVES: &[&str] = &["C:", "D:", "E:"];  // 扫描的驱动器
+const LOG_MAX_AGE_DAYS: u64 = 30;                      // 只清理超过30天的日志
+const LOG_MIN_SIZE_MB: u64 = 1;                        // 只清理大于1MB的日志
 ```
 
 详细的 PocketBase 设置请参考 [POCKETBASE_SETUP.md](POCKETBASE_SETUP.md)

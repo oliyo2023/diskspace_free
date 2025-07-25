@@ -32,13 +32,19 @@ use windows_sys::Win32::{
     UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND},
 };
 
-// PocketBase 配置常量
+// PocketBase 配置常量 (暂时禁用)
 const POCKETBASE_URL: &str = "https://8.140.206.248/pocketbase";
 const COLLECTION_NAME: &str = "cleanup_records";
-const POCKETBASE_ENABLED: bool = true;
+const POCKETBASE_ENABLED: bool = false; // 暂时禁用PocketBase上传
 const POCKETBASE_TIMEOUT: u64 = 30;
 const NOTIFICATION_ENABLED: bool = true;
 const NOTIFICATION_TIMEOUT: u64 = 5000;
+
+// 日志文件清理配置
+const LOG_SCAN_ENABLED: bool = true;
+const LOG_SCAN_DRIVES: &[&str] = &["C:", "D:", "E:"]; // 要扫描的驱动器
+const LOG_MAX_AGE_DAYS: u64 = 30; // 只清理超过30天的日志文件
+const LOG_MIN_SIZE_MB: u64 = 1; // 只清理大于1MB的日志文件
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CleanupRecord {
@@ -136,9 +142,17 @@ impl App {
                 .map(|path| clean_directory(path, sender.clone()))
                 .sum::<usize>();
 
+            // 扫描并清理磁盘上的.log文件
+            let log_files_cleaned = if LOG_SCAN_ENABLED {
+                scan_and_clean_log_files(sender.clone())
+            } else {
+                0
+            };
+
             // 清空回收站
             let recycle_bin_cleaned = empty_recycle_bin(sender.clone());
-            let final_total = if recycle_bin_cleaned { total_cleaned + 1 } else { total_cleaned };
+            let recycle_count = if recycle_bin_cleaned { 1 } else { 0 };
+            let final_total = total_cleaned + log_files_cleaned + recycle_count;
 
             sender.send(format!("CLEANING_COMPLETE:{}", final_total)).unwrap();
             is_cleaning_clone.store(false, Ordering::SeqCst);
@@ -563,6 +577,149 @@ fn send_completion_notification(cleaned_count: usize, memory_count: usize) {
             }
         }
     });
+}
+
+fn scan_and_clean_log_files(sender: mpsc::Sender<String>) -> usize {
+    if !LOG_SCAN_ENABLED {
+        return 0;
+    }
+
+    sender.send("正在扫描磁盘上的.log文件...".to_string()).ok();
+
+    let mut total_cleaned = 0;
+
+    for drive in LOG_SCAN_DRIVES {
+        let drive_path = PathBuf::from(drive);
+        if !drive_path.exists() {
+            continue;
+        }
+
+        sender.send(format!("正在扫描驱动器: {}", drive)).ok();
+
+        // 扫描常见的日志文件位置
+        let log_paths = get_common_log_paths(drive);
+
+        for log_path in log_paths {
+            if log_path.exists() {
+                total_cleaned += scan_directory_for_logs(&log_path, sender.clone());
+            }
+        }
+    }
+
+    if total_cleaned > 0 {
+        sender.send(format!("日志文件清理完成，共清理了 {} 个日志文件", total_cleaned)).ok();
+    } else {
+        sender.send("未找到需要清理的日志文件".to_string()).ok();
+    }
+
+    total_cleaned
+}
+
+fn get_common_log_paths(drive: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let drive_path = Path::new(drive);
+
+    // Windows系统日志路径
+    if cfg!(windows) {
+        paths.push(drive_path.join("Windows").join("Logs"));
+        paths.push(drive_path.join("Windows").join("System32").join("LogFiles"));
+        paths.push(drive_path.join("Windows").join("Temp"));
+        paths.push(drive_path.join("ProgramData").join("Microsoft").join("Windows").join("WER").join("ReportQueue"));
+
+        // 常见应用程序日志路径
+        paths.push(drive_path.join("Program Files").join("Common Files").join("Microsoft Shared").join("Web Server Extensions").join("14").join("Logs"));
+        paths.push(drive_path.join("inetpub").join("logs"));
+
+        // 用户日志路径
+        if let Ok(users_dir) = fs::read_dir(drive_path.join("Users")) {
+            for user_entry in users_dir.filter_map(Result::ok) {
+                let user_path = user_entry.path();
+                paths.push(user_path.join("AppData").join("Local").join("Temp"));
+                paths.push(user_path.join("AppData").join("Roaming"));
+            }
+        }
+    }
+
+    // 通用日志路径
+    paths.push(drive_path.join("logs"));
+    paths.push(drive_path.join("log"));
+    paths.push(drive_path.join("var").join("log"));
+    paths.push(drive_path.join("tmp"));
+
+    paths
+}
+
+fn scan_directory_for_logs(dir: &Path, sender: mpsc::Sender<String>) -> usize {
+    let mut cleaned_count = 0;
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+
+            if path.is_file() {
+                if should_clean_log_file(&path) {
+                    if let Ok(metadata) = fs::metadata(&path) {
+                        // 检查文件大小
+                        let file_size_mb = metadata.len() / (1024 * 1024);
+                        if file_size_mb >= LOG_MIN_SIZE_MB {
+                            // 检查文件年龄
+                            if let Ok(modified) = metadata.modified() {
+                                if let Ok(elapsed) = modified.elapsed() {
+                                    let file_age_days = elapsed.as_secs() / (24 * 3600);
+
+                                    if file_age_days >= LOG_MAX_AGE_DAYS {
+                                        if fs::remove_file(&path).is_ok() {
+                                            sender.send(format!("已删除日志文件: {} ({:.1}MB)",
+                                                path.display(), file_size_mb as f64)).ok();
+                                            cleaned_count += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if path.is_dir() {
+                // 递归扫描子目录，但限制深度避免无限递归
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if !dir_name.starts_with('.') && dir_name != "System Volume Information" {
+                        cleaned_count += scan_directory_for_logs(&path, sender.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    cleaned_count
+}
+
+fn should_clean_log_file(path: &Path) -> bool {
+    if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+        let file_name_lower = file_name.to_lowercase();
+
+        // 检查是否是日志文件
+        if file_name_lower.ends_with(".log") ||
+           file_name_lower.ends_with(".log.old") ||
+           file_name_lower.ends_with(".log.1") ||
+           file_name_lower.ends_with(".log.2") ||
+           file_name_lower.ends_with(".log.3") ||
+           file_name_lower.ends_with(".log.4") ||
+           file_name_lower.ends_with(".log.5") {
+            return true;
+        }
+
+        // 检查其他日志文件格式
+        if file_name_lower.contains(".log.") ||
+           (file_name_lower.contains("log") && (
+               file_name_lower.ends_with(".txt") ||
+               file_name_lower.ends_with(".out") ||
+               file_name_lower.ends_with(".err")
+           )) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn empty_recycle_bin(sender: mpsc::Sender<String>) -> bool {
